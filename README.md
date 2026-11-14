@@ -65,6 +65,21 @@ export JAVA_HOME=/path/to/jdk17
 
 ## 变更记录
 
+### 0.2.5
+
+- **修复 0.2.4 的键盘遮挡（回归）**：0.2.4 的 JS polyfill 用「`position: fixed/absolute/sticky` 且
+  `bottom: 0`」的启发式找 composer，但 opencode 的输入区其实是 `height:100dvh` 的 flex 列里最后一行
+  （祖先全是 `static`），选择器永远匹配不到，`window.__opencodeKeyboard()` 直接 return —— 结果是
+  WebView 保持全高、页面又不动，输入框被键盘完整遮住。
+- 改回「浏览器行为」：不再改 DOM，直接让 WebView 少掉 IME 那块高度。页面根节点是 `h-dvh`，
+  viewport meta 又是 `interactive-widget=resizes-content`，dvh 跟着缩小后布局自然重排，
+  composer 落在键盘上方 —— 和手机 Chrome 里表现一致。
+- bottom inset 取 `max(ime, navigationBars, getWindowVisibleDisplayFrame 测量值)`：IME 打开时取 IME，
+  收起时取导航栏，ROM 不上报 inset 时用可见区域兜底（不再限定 Android 10 以下）。
+- 键盘停稳 180 ms 后补一次 `scrollIntoView({block:'nearest'})`，只用于草稿页内容比可视区高的场景。
+- 删除 `web/KeyboardBridge.kt`（失效的 polyfill）与三处注入调用。
+- 版本号 0.2.4 → 0.2.5（versionCode 7）。
+
 ### 0.2.4
 
 - **方案 B：浏览器式键盘交互**：WebView 保持全高（页面零 reflow），不再逐帧 resize；运行时注入

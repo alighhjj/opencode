@@ -8,7 +8,6 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import android.net.Uri
 import android.net.http.SslError
-import android.os.Build
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.webkit.CookieManager
@@ -35,6 +34,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -75,10 +75,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import ai.opencode.mobile.BuildConfig
 import ai.opencode.mobile.data.Server
 import ai.opencode.mobile.ui.theme.OpenCodeColors
+import kotlinx.coroutines.delay
 import ai.opencode.mobile.web.injectClipboardPolyfill
-import ai.opencode.mobile.web.injectKeyboardComposerPolyfill
 import ai.opencode.mobile.web.installClipboardBridge
-import ai.opencode.mobile.web.pushKeyboardHeight
 
 /**
  * Full-screen host for the OpenCode web client served by `opencode serve`.
@@ -154,44 +153,51 @@ fun BrowserScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // The web client pins its composer to the bottom of its own viewport. Resizing the WebView to keep the
-    // composer above the keyboard forces the whole page to reflow and repaint on every IME frame; for a heavy
-    // chat UI that exceeds the frame budget and reads as stutter. Instead the shell keeps the WebView full
-    // height — the page never reflows — and tells the page the keyboard height; the injected polyfill lifts
-    // only the bottom-pinned composer to sit on top of the keyboard. Moving one fixed element is cheap and
-    // does not reflow the message list, so the keyboard show/hide stays smooth (see KeyboardBridge).
+    // The web client lays its composer out as the last row of a 100dvh flex column — it is NOT a fixed
+    // element, so lifting it from JS would mean re-laying out the page anyway. What a browser does is shrink
+    // the viewport: 100dvh follows the visible area and the composer stays above the keyboard by itself.
+    // So the shell does the same — the WebView keeps its width and loses exactly the IME height at the
+    // bottom, no JS patching involved (see the 0.2.4 regression where a DOM polyfill could not find the
+    // composer and the input sat under the keyboard).
     val density = LocalDensity.current
 
-    // Android 10 and older report no IME inset once the app draws edge to edge, so measure the visible frame
-    // the way adjustResize used to. Kept off Android 11+ to avoid fighting the real inset.
+    // Some ROMs do not report the IME inset while drawing edge to edge, and Android 10 and older never do.
+    // Measure the visible display frame the way adjustResize used to and take the larger of the two; when
+    // the real inset is present both agree, so max() cannot double count.
     val hostView = LocalView.current
-    var legacyIme by remember { mutableIntStateOf(0) }
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-        DisposableEffect(hostView) {
-            val root = hostView.rootView
-            val frame = Rect()
-            val keyboardThreshold = with(density) { 100.dp.roundToPx() }
-            val listener = ViewTreeObserver.OnGlobalLayoutListener {
-                root.getWindowVisibleDisplayFrame(frame)
-                val hidden = root.height - frame.bottom
-                legacyIme = if (hidden > keyboardThreshold) hidden else 0
-            }
-            root.viewTreeObserver.addOnGlobalLayoutListener(listener)
-            listener.onGlobalLayout()
-            onDispose { root.viewTreeObserver.removeOnGlobalLayoutListener(listener) }
+    var frameIme by remember { mutableIntStateOf(0) }
+    DisposableEffect(hostView) {
+        val root = hostView.rootView
+        val frame = Rect()
+        val keyboardThreshold = with(density) { 80.dp.roundToPx() }
+        val listener = ViewTreeObserver.OnGlobalLayoutListener {
+            root.getWindowVisibleDisplayFrame(frame)
+            val hidden = root.height - frame.bottom
+            frameIme = if (hidden > keyboardThreshold) hidden else 0
         }
+        root.viewTreeObserver.addOnGlobalLayoutListener(listener)
+        listener.onGlobalLayout()
+        onDispose { root.viewTreeObserver.removeOnGlobalLayoutListener(listener) }
     }
-    // Keyboard height in physical px; only one source is active per API level (modern ime, legacy fallback).
-    val kbPx = WindowInsets.ime.getBottom(density).coerceAtLeast(legacyIme)
-    val currentKbPx = rememberUpdatedState(kbPx)
 
-    // Push the height into the page whenever it changes (and once the WebView is ready).
-    LaunchedEffect(kbPx, webView) {
-        webView?.pushKeyboardHeight(kbPx)
+    // Bottom inset while the keyboard is closed: gesture navigation bar (or 3-button bar) height.
+    val navPx = WindowInsets.navigationBars.getBottom(density)
+    val imePx = WindowInsets.ime.getBottom(density)
+    // max() of the three sources: IME when open, navigation bar when closed, measured frame as fallback.
+    val bottomInset = with(density) { maxOf(imePx, navPx, frameIme).toDp() }
+
+    // The page uses height:100dvh, so shrinking the WebView already re-lays it out. This is the safety net:
+    // once the keyboard stops moving, scroll the focused editor back into view (a no-op when the page
+    // already placed it above the keyboard). 180 ms of quiet also debounces the per-frame IME animation.
+    LaunchedEffect(bottomInset) {
+        if (bottomInset > 0.dp) {
+            delay(180)
+            webView?.evaluateJavascript(ENSURE_EDITOR_VISIBLE_JS, null)
+        }
     }
 
     Box(Modifier.fillMaxSize().background(OpenCodeColors.Background)) {
-        Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().padding(bottom = bottomInset)) {
             if (loading) {
                 LinearProgressIndicator(
                     progress = { progress },
@@ -269,15 +275,11 @@ fun BrowserScreen(
                             failure = null
                             // Get navigator.clipboard and the composer-lift helper in place before the page's own bundles run.
                             webView.injectClipboardPolyfill()
-                            webView.injectKeyboardComposerPolyfill()
-                            webView.pushKeyboardHeight(currentKbPx.value)
                         }
 
                         override fun onPageCommitVisible(webView: WebView, url: String?) {
                             // The first frame of the new document is up: guaranteed to hit the right JS context.
                             webView.injectClipboardPolyfill()
-                            webView.injectKeyboardComposerPolyfill()
-                            webView.pushKeyboardHeight(currentKbPx.value)
                         }
 
                         override fun onPageFinished(webView: WebView, url: String?) {
@@ -285,8 +287,6 @@ fun BrowserScreen(
                             progress = 1f
                             // Defensive second pass: an SPA may have replaced the document during hydration.
                             webView.injectClipboardPolyfill()
-                            webView.injectKeyboardComposerPolyfill()
-                            webView.pushKeyboardHeight(currentKbPx.value)
                         }
 
                         override fun onReceivedError(
@@ -508,3 +508,21 @@ private fun String.toAndroidPermission(): String? = when (this) {
     PermissionRequest.RESOURCE_AUDIO_CAPTURE -> Manifest.permission.RECORD_AUDIO
     else -> null
 }
+
+/**
+ * Scrolls the focused editor back into the visible area after the keyboard settles. The page's own layout
+ * (height:100dvh + `interactive-widget=resizes-content`) is what normally keeps the composer above the IME;
+ * this only covers the case where the editor was pushed below the fold, e.g. a draft session whose content
+ * is taller than the shrunken viewport. `block: "nearest"` avoids jumping when nothing is clipped.
+ */
+private val ENSURE_EDITOR_VISIBLE_JS = """
+(function () {
+  var a = document.activeElement;
+  if (!a || !a.matches) return;
+  if (!a.matches('textarea, input:not([readonly]), [contenteditable="true"]')) return;
+  var r = a.getBoundingClientRect();
+  var vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  if (r.bottom <= vh && r.top >= 0) return;
+  a.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+})();
+""".trimIndent()
