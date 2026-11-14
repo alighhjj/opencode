@@ -1,0 +1,17 @@
+# Gradle / Android build output
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Packaged artifacts (distributed separately)
+*.apk
+*.aab
+
+# OS noise
+.DS_Store
+Thumbs.db
