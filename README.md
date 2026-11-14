@@ -59,11 +59,20 @@ export JAVA_HOME=/path/to/jdk17
 | `data/ServerStore.kt` | 最近连接持久化 |
 | `ui/OpenCodeApp.kt` | 连接页 ↔ 浏览页状态机 |
 | `ui/screens/ConnectScreen.kt` | 服务器地址、密码、最近列表、启动提示 |
-| `ui/screens/BrowserScreen.kt` | WebView 宿主：鉴权、权限、文件选择、返回栈、错误页、键盘避让 |
+| `ui/screens/BrowserScreen.kt` | WebView 宿主：鉴权、权限、文件选择、返回栈、错误页、状态栏/键盘安全区 |
 | `web/ClipboardBridge.kt` | 为 http 源补上 `navigator.clipboard`（"Copy path" 等复制按钮） |
-| `web/KeyboardBridge.kt` | 键盘高度桥：注入 composer 跟随逻辑，WebView 全高不 reflow |
 
 ## 变更记录
+
+### 0.2.6
+
+- **修复顶部标题栏被状态栏遮挡**：activity 是 edge-to-edge（`enableEdgeToEdge`），WebView 的原点就在状态栏下面，
+  Web 客户端自己的头部（会话标题、`会话 / 更改 / More…` 标签栏）被时间、电量图标压住，点不到按钮。
+- 给 WebView 容器补上 `WindowInsets.safeDrawing.getTop()` 的顶部内边距（刘海屏取 cutout 的更高值），
+  页面仍是 `100dvh`，会自己重排进剩下的盒子 —— 和键盘避让用同一套「缩小视口」思路，不注入任何 JS。
+- 底部内边距逻辑不变（`max(ime, navigationBars, getWindowVisibleDisplayFrame 测量值)`）。
+- 状态栏区域露出的是 `#080808` 主题底色，`SystemBarStyle.dark` 保证图标为浅色，深浅对比正常。
+
 
 ### 0.2.5
 

@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -186,6 +187,12 @@ fun BrowserScreen(
     // max() of the three sources: IME when open, navigation bar when closed, measured frame as fallback.
     val bottomInset = with(density) { maxOf(imePx, navPx, frameIme).toDp() }
 
+    // The activity draws edge to edge, so the WebView's own origin is under the status bar and the web
+    // client's header (tab bar, session title) ended up behind the clock and battery icons. safeDrawing
+    // carries the status bar height and, on notched devices, the taller cutout — the page's 100dvh then
+    // re-flows into the remaining box, exactly like the WebView resize used for the keyboard.
+    val topInset = with(density) { WindowInsets.safeDrawing.getTop(density).toDp() }
+
     // The page uses height:100dvh, so shrinking the WebView already re-lays it out. This is the safety net:
     // once the keyboard stops moving, scroll the focused editor back into view (a no-op when the page
     // already placed it above the keyboard). 180 ms of quiet also debounces the per-frame IME animation.
@@ -197,7 +204,7 @@ fun BrowserScreen(
     }
 
     Box(Modifier.fillMaxSize().background(OpenCodeColors.Background)) {
-        Column(Modifier.fillMaxSize().padding(bottom = bottomInset)) {
+        Column(Modifier.fillMaxSize().padding(top = topInset, bottom = bottomInset)) {
             if (loading) {
                 LinearProgressIndicator(
                     progress = { progress },
