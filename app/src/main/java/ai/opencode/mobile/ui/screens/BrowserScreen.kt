@@ -26,11 +26,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateIntAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +38,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -163,27 +159,12 @@ fun BrowserScreen(
     // the IME is up. Android 11+ reports the IME inset, and from Android 15 (targetSdk 35) the platform stops
     // resizing the window at all — keeping the view full height is exactly what hides the composer.
     //
-    // Resizing the WebView forces the whole page to reflow and repaint. The raw IME inset often arrives in
-    // coarse, uneven steps (the platform only interpolates it when a WindowInsetsAnimation.Callback is
-    // registered), so slamming the WebView with those steps at the fastest point of the animation is what
-    // reads as stutter. Animating the inset with a spring turns those steps into a steady, eased curve:
-    // the resize rate stays controlled and the reflows are spread evenly instead of arriving in big,
-    // irregular jumps. The specs are remembered because animateIntAsState keys its animation on them, and a
-    // fresh spring/tween per recomposition would restart the animation every frame and never settle.
+    // Resizing the WebView forces the whole page to reflow and repaint; the cost is per resize event, so the
+    // fewer the better. The IME inset is consumed by windowInsetsPadding at layout time and the WebView is
+    // sized to exactly what the platform reports, keeping the composer glued to the keyboard with the least
+    // possible reflows. Do NOT animate/smooth this value: easing made the WebView lag the keyboard and keep
+    // reflowing after it settled, lengthening the animation and making the stutter noticeably worse.
     val density = LocalDensity.current
-    val navPx = WindowInsets.navigationBars.getBottom(density)
-    val imePx = WindowInsets.ime.getBottom(density)
-    val imeSpring = remember {
-        spring<Int>(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow,
-        )
-    }
-    val animatedImePx by animateIntAsState(
-        targetValue = imePx,
-        animationSpec = imeSpring,
-        label = "ime",
-    )
 
     // Android 10 and older report no IME inset once the app draws edge to edge, so measure the visible frame
     // the way adjustResize used to. Kept off Android 11+ to avoid fighting the real inset.
@@ -204,25 +185,21 @@ fun BrowserScreen(
             onDispose { root.viewTreeObserver.removeOnGlobalLayoutListener(listener) }
         }
     }
-    // Those platforms deliver the fallback in one jump, so ease it into the same smooth motion.
-    val legacyTween = remember {
-        tween<Int>(durationMillis = 200, easing = FastOutSlowInEasing)
+    // The IME inset already spans the navigation bar, so only the leftover is added on top of systemBars.
+    // Only meaningful on Android 10 and older; modern insets are applied entirely by the union below, which
+    // is why the inset is no longer read in composition (that recomposed the whole screen every frame).
+    val extraBottom = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+        val navBottom = WindowInsets.navigationBars.getBottom(density)
+        with(density) { (legacyIme - navBottom).coerceAtLeast(0).toDp() }
+    } else {
+        0.dp
     }
-    val animatedLegacyPx by animateIntAsState(
-        targetValue = legacyIme,
-        animationSpec = legacyTween,
-        label = "legacyIme",
-    )
-    // Keyboard height measured from the window bottom; only one source is active per API level.
-    val keyboardPx = animatedImePx.coerceAtLeast(animatedLegacyPx)
-    // systemBars already covers the navigation bar, so only the keyboard height above it is added on top.
-    val extraBottom = with(density) { (keyboardPx - navPx).coerceAtLeast(0).toDp() }
 
     Box(Modifier.fillMaxSize().background(OpenCodeColors.Background)) {
         Column(
             Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.systemBars)
+                .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))
                 .padding(bottom = extraBottom),
         ) {
             if (loading) {

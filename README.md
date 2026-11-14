@@ -64,6 +64,14 @@ export JAVA_HOME=/path/to/jdk17
 
 ## 变更记录
 
+### 0.2.3
+
+- **修复 0.2.2 引入的键盘卡顿加剧**：回退 `animateIntAsState` 平滑方案——缓动会让 WebView 滞后于键盘、
+  停稳后还继续 reflow，反而拉长动画、掉帧更多。改为让 `windowInsetsPadding` 在**布局阶段**直接消费
+  IME inset（WebView 精确跟随键盘、reflow 次数最少），并移除组合阶段的冗余 inset 读取
+  （原实现每帧键盘动画都让整屏重组）。
+- 版本号 0.2.2 → 0.2.3（versionCode 5）。
+
 ### 0.2.2
 
 - **修复键盘弹收时 UI 压缩/伸展卡顿**：`BrowserScreen` 不再把平台的原始 IME inset 直接贴给 WebView，
