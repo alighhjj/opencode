@@ -16,8 +16,8 @@
 OPENCODE_PASSWORD='<strong-secret>' opencode serve --hostname 0.0.0.0 --port 4096
 opencode pair          # 可选：生成一次性配对链接/二维码
 
-# 手机端（APK 为本地构建产物，不入库）
-adb install -r /path/to/OpenCode-Mobile-0.2.0-release.apk
+# 手机端（APK 由 CI 构建并挂到 Release，不入库）
+adb install -r /path/to/OpenCode-Mobile-0.2.1-release.apk
 ```
 
 打开 App → 填入 `电脑IP:4096` + 密码 → 连接。也可以直接粘贴 `opencode pair` 打印的链接。
@@ -27,13 +27,14 @@ adb install -r /path/to/OpenCode-Mobile-0.2.0-release.apk
 打标签即发布，APK 由 GitHub Actions 从源码构建并挂到 Release：
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0        # 触发 .github/workflows/release.yml
+git tag v0.2.1
+git push origin v0.2.1        # 触发 .github/workflows/release.yml
 ```
 
-也可以在 Actions 页手动 `Run workflow` 并填版本号——CI 会自己改 `versionCode`/`versionName`、提交、打标签，然后构建发布。
+也可以在 Actions 页手动 `Run workflow`：只跑测试 / lint / 构建，产物作为 workflow artifact 上传，不会创建 Release
+（tag 名必须和 `app/build.gradle.kts` 里的 `versionName` 对齐）。
 
-流水线做的事：JDK 17 → Android SDK 35 → `testDebugUnitTest` → `lintDebug` → `assembleRelease` → 生成 `.sha256` → 上传到 Release。
+流水线做的事：JDK 17 → Android SDK 35 → `testDebugUnitTest` → `lintDebug` → `assembleRelease` → 生成 `SHA256SUMS` → 上传到 Release。
 
 ## 构建
 

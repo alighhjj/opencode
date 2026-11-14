@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-35 build-tools;35.0.0"
+
+      - name: Resolve version
+        id: version
+        run: |
+          version=$(sed -n 's/^ *versionName = "\(.*\)"/\1/p' app/build.gradle.kts | head -n1)
+          if [ -z "$version" ]; then
+            echo "versionName not found in app/build.gradle.kts" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Lint
+        run: ./gradlew --no-daemon lintDebug
+
+      - name: Assemble release
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk \
+            "dist/OpenCode-Mobile-${{ steps.version.outputs.version }}-release.apk"
+          (cd dist && sha256sum ./*.apk > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenCode-Mobile-${{ steps.version.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OpenCode Mobile v${{ steps.version.outputs.version }}
+          files: dist/*
+          body: |
+            Android 外壳客户端，由本仓库源码构建（minSdk 26 / targetSdk 35）。
+
+            ### 安装
+            ```bash
+            adb install -r OpenCode-Mobile-${{ steps.version.outputs.version }}-release.apk
+            ```
+
+            ### 说明
+            - 使用 debug keystore 签名，仅用于内测分发；正式发布请替换私有 keystore
+            - `SHA256SUMS` 为本包的 SHA-256 校验和
+            - 非官方客户端，与 opencode 官方无关联
