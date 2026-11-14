@@ -35,11 +35,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.union
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -53,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -79,7 +76,9 @@ import ai.opencode.mobile.BuildConfig
 import ai.opencode.mobile.data.Server
 import ai.opencode.mobile.ui.theme.OpenCodeColors
 import ai.opencode.mobile.web.injectClipboardPolyfill
+import ai.opencode.mobile.web.injectKeyboardComposerPolyfill
 import ai.opencode.mobile.web.installClipboardBridge
+import ai.opencode.mobile.web.pushKeyboardHeight
 
 /**
  * Full-screen host for the OpenCode web client served by `opencode serve`.
@@ -155,15 +154,12 @@ fun BrowserScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // The web client pins its composer to the bottom of the viewport, so the WebView must get shorter while
-    // the IME is up. Android 11+ reports the IME inset, and from Android 15 (targetSdk 35) the platform stops
-    // resizing the window at all — keeping the view full height is exactly what hides the composer.
-    //
-    // Resizing the WebView forces the whole page to reflow and repaint; the cost is per resize event, so the
-    // fewer the better. The IME inset is consumed by windowInsetsPadding at layout time and the WebView is
-    // sized to exactly what the platform reports, keeping the composer glued to the keyboard with the least
-    // possible reflows. Do NOT animate/smooth this value: easing made the WebView lag the keyboard and keep
-    // reflowing after it settled, lengthening the animation and making the stutter noticeably worse.
+    // The web client pins its composer to the bottom of its own viewport. Resizing the WebView to keep the
+    // composer above the keyboard forces the whole page to reflow and repaint on every IME frame; for a heavy
+    // chat UI that exceeds the frame budget and reads as stutter. Instead the shell keeps the WebView full
+    // height — the page never reflows — and tells the page the keyboard height; the injected polyfill lifts
+    // only the bottom-pinned composer to sit on top of the keyboard. Moving one fixed element is cheap and
+    // does not reflow the message list, so the keyboard show/hide stays smooth (see KeyboardBridge).
     val density = LocalDensity.current
 
     // Android 10 and older report no IME inset once the app draws edge to edge, so measure the visible frame
@@ -185,23 +181,17 @@ fun BrowserScreen(
             onDispose { root.viewTreeObserver.removeOnGlobalLayoutListener(listener) }
         }
     }
-    // The IME inset already spans the navigation bar, so only the leftover is added on top of systemBars.
-    // Only meaningful on Android 10 and older; modern insets are applied entirely by the union below, which
-    // is why the inset is no longer read in composition (that recomposed the whole screen every frame).
-    val extraBottom = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-        val navBottom = WindowInsets.navigationBars.getBottom(density)
-        with(density) { (legacyIme - navBottom).coerceAtLeast(0).toDp() }
-    } else {
-        0.dp
+    // Keyboard height in physical px; only one source is active per API level (modern ime, legacy fallback).
+    val kbPx = WindowInsets.ime.getBottom(density).coerceAtLeast(legacyIme)
+    val currentKbPx = rememberUpdatedState(kbPx)
+
+    // Push the height into the page whenever it changes (and once the WebView is ready).
+    LaunchedEffect(kbPx, webView) {
+        webView?.pushKeyboardHeight(kbPx)
     }
 
     Box(Modifier.fillMaxSize().background(OpenCodeColors.Background)) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))
-                .padding(bottom = extraBottom),
-        ) {
+        Column(Modifier.fillMaxSize()) {
             if (loading) {
                 LinearProgressIndicator(
                     progress = { progress },
@@ -277,13 +267,17 @@ fun BrowserScreen(
                         override fun onPageStarted(webView: WebView, url: String?, favicon: Bitmap?) {
                             loading = true
                             failure = null
-                            // Get navigator.clipboard in place before the page's own bundles run.
+                            // Get navigator.clipboard and the composer-lift helper in place before the page's own bundles run.
                             webView.injectClipboardPolyfill()
+                            webView.injectKeyboardComposerPolyfill()
+                            webView.pushKeyboardHeight(currentKbPx.value)
                         }
 
                         override fun onPageCommitVisible(webView: WebView, url: String?) {
                             // The first frame of the new document is up: guaranteed to hit the right JS context.
                             webView.injectClipboardPolyfill()
+                            webView.injectKeyboardComposerPolyfill()
+                            webView.pushKeyboardHeight(currentKbPx.value)
                         }
 
                         override fun onPageFinished(webView: WebView, url: String?) {
@@ -291,6 +285,8 @@ fun BrowserScreen(
                             progress = 1f
                             // Defensive second pass: an SPA may have replaced the document during hydration.
                             webView.injectClipboardPolyfill()
+                            webView.injectKeyboardComposerPolyfill()
+                            webView.pushKeyboardHeight(currentKbPx.value)
                         }
 
                         override fun onReceivedError(

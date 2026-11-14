@@ -61,8 +61,17 @@ export JAVA_HOME=/path/to/jdk17
 | `ui/screens/ConnectScreen.kt` | 服务器地址、密码、最近列表、启动提示 |
 | `ui/screens/BrowserScreen.kt` | WebView 宿主：鉴权、权限、文件选择、返回栈、错误页、键盘避让 |
 | `web/ClipboardBridge.kt` | 为 http 源补上 `navigator.clipboard`（"Copy path" 等复制按钮） |
+| `web/KeyboardBridge.kt` | 键盘高度桥：注入 composer 跟随逻辑，WebView 全高不 reflow |
 
 ## 变更记录
+
+### 0.2.4
+
+- **方案 B：浏览器式键盘交互**：WebView 保持全高（页面零 reflow），不再逐帧 resize；运行时注入
+  `KeyboardBridge` 的 JS/CSS（仿 `ClipboardBridge`），把键盘高度经 `window.__opencodeKeyboard(hPx)`
+  推给页面，令底部固定的 composer 跟随键盘上移（CSS `bottom` transition），消除键盘弹收时整页
+  reflow 导致的压缩/伸展卡顿。
+- 版本号 0.2.3 → 0.2.4（versionCode 6）。
 
 ### 0.2.3
 
