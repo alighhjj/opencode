@@ -59,8 +59,18 @@ export JAVA_HOME=/path/to/jdk17
 | `ui/OpenCodeApp.kt` | 连接页 ↔ 浏览页状态机 |
 | `ui/screens/ConnectScreen.kt` | 服务器地址、密码、最近列表、启动提示 |
 | `ui/screens/BrowserScreen.kt` | WebView 宿主：鉴权、权限、文件选择、返回栈、错误页、键盘避让 |
+| `web/ClipboardBridge.kt` | 为 http 源补上 `navigator.clipboard`（"Copy path" 等复制按钮） |
 
 ## 变更记录
+
+### 0.2.1
+
+- **修复 "Copy path" 报 `Cannot read properties of undefined (reading 'writeText')`**：
+  WebView 打开的是 `http://<局域网 IP>:4096`，属于非安全上下文，`navigator.clipboard` 为 `undefined`，
+  Web 客户端的复制按钮直接解引用就会抛错。现在通过 `addJavascriptInterface` 暴露原生剪贴板，
+  并在 `onPageStarted` / `onPageFinished` 注入 `navigator.clipboard` 垫片（带 `execCommand('copy')` 兜底），
+  仅当页面仍指向已配置的服务器时才写入剪贴板。
+- 版本号 0.2.0 → 0.2.1（versionCode 3）。
 
 ### 0.2.0
 

@@ -78,6 +78,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import ai.opencode.mobile.BuildConfig
 import ai.opencode.mobile.data.Server
 import ai.opencode.mobile.ui.theme.OpenCodeColors
+import ai.opencode.mobile.web.injectClipboardPolyfill
+import ai.opencode.mobile.web.installClipboardBridge
 
 /**
  * Full-screen host for the OpenCode web client served by `opencode serve`.
@@ -230,6 +232,10 @@ fun BrowserScreen(
                         setAcceptThirdPartyCookies(view, true)
                     }
 
+                    // http:// origins are not secure contexts, so the web client's navigator.clipboard is
+                    // undefined and "Copy path" failed with "reading 'writeText'". Bridge the platform clipboard.
+                    view.installClipboardBridge(runCatching { Uri.parse(server.url).host }.getOrNull())
+
                     view.webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
                             webView: WebView,
@@ -262,11 +268,20 @@ fun BrowserScreen(
                         override fun onPageStarted(webView: WebView, url: String?, favicon: Bitmap?) {
                             loading = true
                             failure = null
+                            // Get navigator.clipboard in place before the page's own bundles run.
+                            webView.injectClipboardPolyfill()
+                        }
+
+                        override fun onPageCommitVisible(webView: WebView, url: String?) {
+                            // The first frame of the new document is up: guaranteed to hit the right JS context.
+                            webView.injectClipboardPolyfill()
                         }
 
                         override fun onPageFinished(webView: WebView, url: String?) {
                             loading = false
                             progress = 1f
+                            // Defensive second pass: an SPA may have replaced the document during hydration.
+                            webView.injectClipboardPolyfill()
                         }
 
                         override fun onReceivedError(
