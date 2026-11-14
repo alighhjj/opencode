@@ -1,5 +1,7 @@
 # OpenCode Mobile（Android 外壳）
 
+[![Release](https://github.com/alighhjj/opencode/actions/workflows/release.yml/badge.svg)](https://github.com/alighhjj/opencode/actions/workflows/release.yml)
+
 把 [anomalyco/opencode](https://github.com/anomalyco/opencode) 的 Web 客户端装进一个原生 Android 壳里，
 手机作为远程客户端连接电脑/服务器上的 `opencode serve`。
 
@@ -19,6 +21,19 @@ adb install -r /path/to/OpenCode-Mobile-0.2.0-release.apk
 ```
 
 打开 App → 填入 `电脑IP:4096` + 密码 → 连接。也可以直接粘贴 `opencode pair` 打印的链接。
+
+## 发布（CI 自动构建）
+
+打标签即发布，APK 由 GitHub Actions 从源码构建并挂到 Release：
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0        # 触发 .github/workflows/release.yml
+```
+
+也可以在 Actions 页手动 `Run workflow` 并填版本号——CI 会自己改 `versionCode`/`versionName`、提交、打标签，然后构建发布。
+
+流水线做的事：JDK 17 → Android SDK 35 → `testDebugUnitTest` → `lintDebug` → `assembleRelease` → 生成 `.sha256` → 上传到 Release。
 
 ## 构建
 
