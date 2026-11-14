@@ -64,6 +64,13 @@ export JAVA_HOME=/path/to/jdk17
 
 ## 变更记录
 
+### 0.2.2
+
+- **修复键盘弹收时 UI 压缩/伸展卡顿**：`BrowserScreen` 不再把平台的原始 IME inset 直接贴给 WebView，
+  改为 `WindowInsets.ime.animate()`（spring 缓动）并收敛重组范围；Android 10 及以下用
+  `animateIntAsState` 平滑可见区域兜底，避免 WebView 逐帧大幅 reflow 导致的掉帧。
+- 版本号 0.2.1 → 0.2.2（versionCode 4）。
+
 ### 0.2.1
 
 - **修复 "Copy path" 报 `Cannot read properties of undefined (reading 'writeText')`**：

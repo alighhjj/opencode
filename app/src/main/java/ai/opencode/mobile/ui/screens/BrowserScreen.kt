@@ -26,11 +26,18 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.animate
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -88,6 +95,7 @@ import ai.opencode.mobile.web.installClipboardBridge
  * only supplies what a browser would: a configured WebView, basic-auth credentials, back navigation and
  * permission bridging for the camera (QR pairing) and the microphone (voice input).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun BrowserScreen(
@@ -158,13 +166,29 @@ fun BrowserScreen(
     // The web client pins its composer to the bottom of the viewport, so the WebView must get shorter while
     // the IME is up. Android 11+ reports the IME inset, and from Android 15 (targetSdk 35) the platform stops
     // resizing the window at all — keeping the view full height is exactly what hides the composer.
+    //
+    // Resizing the WebView forces the whole page to reflow and repaint. The raw IME inset often arrives in
+    // coarse, uneven steps (the platform only interpolates it when a WindowInsetsAnimation.Callback is
+    // registered), so slamming the WebView with those steps at the fastest point of the animation is what
+    // reads as stutter. Two things tame it:
+    //  1. animate() turns the stepped value into a steady, eased curve (spring), so the resize rate is
+    //     controlled and the reflows are spread evenly instead of arriving in big irregular jumps.
+    //  2. The animated WindowInsets is consumed by the layout modifier only (windowInsetsPadding reads it
+    //     during measure), so an IME change re-lays-out the column instead of recomposing the whole screen.
     val density = LocalDensity.current
-    val hostView = LocalView.current
-    val imeBottom = WindowInsets.ime.getBottom(density)
-    val navBottom = WindowInsets.navigationBars.getBottom(density)
+    // Stable specs: WindowInsets.animate()/animateIntAsState() key their LaunchedEffect on the spec, so a
+    // fresh spring/tween on every recomposition would restart the animation each frame and never settle.
+    val imeSpring = remember {
+        spring<Int>(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        )
+    }
+    val animatedIme = WindowInsets.ime.animate(animationSpec = imeSpring)
 
     // Android 10 and older report no IME inset once the app draws edge to edge, so measure the visible frame
     // the way adjustResize used to. Kept off Android 11+ to avoid fighting the real inset.
+    val hostView = LocalView.current
     var legacyIme by remember { mutableIntStateOf(0) }
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
         DisposableEffect(hostView) {
@@ -181,16 +205,30 @@ fun BrowserScreen(
             onDispose { root.viewTreeObserver.removeOnGlobalLayoutListener(listener) }
         }
     }
+    // Those platforms deliver the fallback in one jump, so ease it into the same smooth motion.
+    val legacyTween = remember {
+        tween<Int>(durationMillis = 200, easing = FastOutSlowInEasing)
+    }
+    val animatedLegacyIme by animateIntAsState(
+        targetValue = legacyIme,
+        animationSpec = legacyTween,
+        label = "legacyIme",
+    )
     // The IME inset already spans the navigation bar, so only the leftover is added on top of systemBars.
-    val extraBottom = with(density) {
-        (legacyIme - navBottom - imeBottom).coerceAtLeast(0).toDp()
+    // Only meaningful on Android 10 and older; modern insets are handled entirely by the union below.
+    val extraBottom = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+        val navBottom = WindowInsets.navigationBars.getBottom(density)
+        val ime = animatedIme.getBottom(density)
+        with(density) { (animatedLegacyIme - navBottom - ime).coerceAtLeast(0).toDp() }
+    } else {
+        0.dp
     }
 
     Box(Modifier.fillMaxSize().background(OpenCodeColors.Background)) {
         Column(
             Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime))
+                .windowInsetsPadding(WindowInsets.systemBars.union(animatedIme))
                 .padding(bottom = extraBottom),
         ) {
             if (loading) {
